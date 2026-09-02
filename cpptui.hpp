@@ -1580,6 +1580,28 @@ class VTParser {
   /// @return true if inside a sequence, false otherwise
   bool in_sequence() const { return state_ != State::Start; }
 
+  /// @brief Flush pending state when no more input is available.
+  ///
+  /// When the parser is in Escape state (received ESC but no follow-up
+  /// byte arrived within the grace period), produces a standalone ESC
+  /// key event. For other incomplete states (CSI, SS3, etc.), the
+  /// partial sequence is discarded and None is returned.
+  ///
+  /// @return An Event (Key with key=27 for standalone ESC, or None)
+  Event timeout() {
+    Event event;
+    event.type = EventType::None;
+    if (state_ == State::Escape) {
+      state_ = State::Start;
+      event.type = EventType::Key;
+      event.key = 27;
+    } else if (state_ != State::Start) {
+      // Discard incomplete sequence (CSI, SS3, etc.)
+      state_ = State::Start;
+    }
+    return event;
+  }
+
   /// @brief Process a single byte of input
   /// @param c The character to process
   /// @return An Event if a complete sequence or key was parsed, otherwise
@@ -2583,6 +2605,9 @@ class Terminal {
             case VK_SPACE:
               event.key = ' ';
               break;  // Handle Ctrl+Space
+            case VK_ESCAPE:
+              event.key = 27;
+              break;
             default:
               event.type = EventType::None;
               break;
@@ -2710,6 +2735,13 @@ class Terminal {
         struct timeval tv = {0, 50000};
         if (select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) <= 0) break;
       }
+    }
+
+    // If the parser is mid-sequence but no more bytes arrived
+    // within the grace period, flush as standalone ESC key (if in
+    // Escape state) or discard the partial sequence.
+    if (event.type == EventType::None) {
+      event = parser_.timeout();
     }
 #endif
     return event;
