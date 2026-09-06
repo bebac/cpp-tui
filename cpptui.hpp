@@ -3000,6 +3000,12 @@ class Widget : public std::enable_shared_from_this<Widget> {
    */
   virtual bool hit_test(int px, int py) const { return contains(px, py); }
 
+  /// @brief Check if this widget has an active text selection.
+  /// Used by the App's Ctrl+C handler to decide whether to copy
+  /// or exit. Custom widgets that support text selection should
+  /// override this to return true when a selection is active.
+  virtual bool has_selection() const { return false; }
+
  protected:
   inline static Widget *focused_widget_ = nullptr;
   bool focused_ = false;
@@ -3283,7 +3289,7 @@ class Static : public Widget {
     return false;
   }
 
-  bool has_selection() const { return selection_state_.has_selection(); }
+  bool has_selection() const override { return selection_state_.has_selection(); }
 
   std::string get_selected_text() const {
     if (!has_selection()) return "";
@@ -3352,7 +3358,7 @@ class Label : public Widget {
       true;  ///< If true, text can be selected with mouse and copyable
 
   // Selection State
-  bool has_selection() const { return selection_state_.has_selection(); }
+  bool has_selection() const override { return selection_state_.has_selection(); }
 
   std::string get_selected_text() const {
     if (!has_selection()) return "";
@@ -3686,7 +3692,7 @@ class Paragraph : public Widget {
     return false;
   }
 
-  bool has_selection() const { return selection_state_.has_selection(); }
+  bool has_selection() const override { return selection_state_.has_selection(); }
 
   std::string get_selected_text() const {
     if (!has_selection()) return "";
@@ -4170,7 +4176,7 @@ class TextList : public Widget {
     Widget::on_blur();
   }
 
-  bool has_selection() const { return selection_state_.has_selection(); }
+  bool has_selection() const override { return selection_state_.has_selection(); }
 
   std::string get_selected_text() const {
     if (!has_selection()) return "";
@@ -5169,7 +5175,7 @@ class Input : public Widget
   void clear_selection() { selection_state_.clear(); }
 
   /// @brief Check if there is an active selection
-  bool has_selection() const { return selection_state_.has_selection(); }
+  bool has_selection() const override { return selection_state_.has_selection(); }
 
   /// @brief Start a selection at the current cursor position (for keyboard)
   void start_selection() {
@@ -5368,7 +5374,7 @@ class TextArea : public Widget {
   }
 
   /// @brief Check if there is an active selection
-  bool has_selection() const {
+  bool has_selection() const override {
     return sel_anchor_x_ >= 0 && sel_anchor_y_ >= 0 &&
            (sel_anchor_x_ != cursor_x_ || sel_anchor_y_ != cursor_y_);
   }
@@ -9033,7 +9039,7 @@ class Border : public Container {
   /// @brief Get the current title
   const std::string &get_title() const { return title_; }
 
-  bool has_selection() const { return selection_state_.has_selection(); }
+  bool has_selection() const override { return selection_state_.has_selection(); }
 
   void layout() override {
     // All children fill the area minus border
@@ -16757,6 +16763,13 @@ class App {
                            std::dynamic_pointer_cast<Border>(focused_widget_)) {
               if (border->has_selection()) handled_as_copy = true;
             }
+          }
+
+          // Fallback: check if focused widget has selection via virtual
+          // method (for custom widget types not in the dynamic_cast chain)
+          if (!handled_as_copy && focused_widget_ &&
+              focused_widget_->has_selection()) {
+            handled_as_copy = true;
           }
 
           if (!handled_as_copy) {
