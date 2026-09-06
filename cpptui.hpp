@@ -270,6 +270,7 @@ struct TextHelper {
   static std::vector<CharInfo> prepare_text_for_render(
       const std::string &text) {
     std::vector<CharInfo> chars;
+    chars.reserve(text.size());  // Upper bound: each char is >= 1 byte
     size_t pos = 0;
     while (pos < text.size()) {
       uint32_t codepoint;
@@ -905,15 +906,23 @@ struct Color {
   /// @param bg The background color
   /// @return Black or White, whichever provides better contrast
   static Color contrast_color(const Color &bg) {
-    // Proper sRGB to linear conversion with gamma correction
-    auto srgb_to_linear = [](double c) -> double {
-      if (c <= 0.04045) return c / 12.92;
-      return std::pow((c + 0.055) / 1.055, 2.4);
+    // Precomputed sRGB-to-linear lookup table (avoids 3x std::pow per call)
+    struct SrgbLut {
+      double values[256];
+      SrgbLut() {
+        for (int i = 0; i < 256; ++i) {
+          double c = i / 255.0;
+          values[i] =
+              (c <= 0.04045) ? (c / 12.92)
+                             : std::pow((c + 0.055) / 1.055, 2.4);
+        }
+      }
     };
+    static SrgbLut lut;
 
-    double r_lin = srgb_to_linear(bg.r / 255.0);
-    double g_lin = srgb_to_linear(bg.g / 255.0);
-    double b_lin = srgb_to_linear(bg.b / 255.0);
+    double r_lin = lut.values[bg.r];
+    double g_lin = lut.values[bg.g];
+    double b_lin = lut.values[bg.b];
 
     // Relative luminance formula (ITU-R BT.709)
     double luminance = 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin;
@@ -2098,9 +2107,7 @@ class Terminal {
   /// @param x X coordinate (0-based)
   /// @param y Y coordinate (0-based)
   void moveCursor(int x, int y) {
-    std::stringstream ss;
-    ss << "\033[" << (y + 1) << ";" << (x + 1) << "H";
-    write(ss.str());
+    write("\033[" + std::to_string(y + 1) + ";" + std::to_string(x + 1) + "H");
   }
 
   /// @brief Hide the terminal cursor
@@ -2248,8 +2255,14 @@ class Terminal {
           output += currCell.content;
 
           // Calculate display width for proper cursor tracking
-          int display_width = utf8_display_width(currCell.content);
-          if (display_width < 1) display_width = 1;
+          // Fast path: 0-1 byte content always yields width 1 after clamping
+          int display_width;
+          if (currCell.content.size() <= 1) {
+            display_width = 1;
+          } else {
+            display_width = utf8_display_width(currCell.content);
+            if (display_width < 1) display_width = 1;
+          }
 
           // Cursor advances by display width after write
           cur_x = x + display_width;
