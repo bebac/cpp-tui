@@ -34,7 +34,7 @@
 namespace cpptui {
 
 constexpr int VERSION_MAJOR = 1;
-constexpr int VERSION_MINOR = 14;
+constexpr int VERSION_MINOR = 15;
 constexpr int VERSION_PATCH = 0;
 
 inline std::string version() {
@@ -1612,13 +1612,24 @@ class VTParser {
         }
       }
     } else if (state_ == State::Escape) {
-      buffer_.push_back(c);
       if (c == '[') {
+        buffer_.push_back(c);
         state_ = State::CSI;
       } else if (c == 'O') {
+        buffer_.push_back(c);
         state_ = State::SS3;
+      } else if (c == 27) {
+        // A second ESC arrived. The previous ESC was a standalone Escape key.
+        // The new ESC starts a new escape sequence (e.g. mouse report or another ESC).
+        event.type = EventType::Key;
+        event.key = 27;
+        event.alt = false;
+        buffer_.clear();
+        buffer_.push_back(c);
+        state_ = State::Escape;
       } else {
         // Alt + Key
+        buffer_.push_back(c);
         state_ = State::Start;
         event.type = EventType::Key;
         event.key = c;
@@ -1706,6 +1717,25 @@ class VTParser {
       }
     }
 
+    return event;
+  }
+
+  /// @brief Flush any pending partial sequence when an input read times out
+  /// @return An Event if a pending sequence like lone Escape should be emitted, otherwise None
+  Event flush() {
+    Event event;
+    event.type = EventType::None;
+    if (state_ == State::Escape) {
+      event.type = EventType::Key;
+      event.key = 27;
+      event.alt = false;
+    }
+    state_ = State::Start;
+    buffer_.clear();
+    paste_buffer_.clear();
+    paste_escape_buffer_.clear();
+    paste_escape_state_ = 0;
+    byte_counter_ = 0;
     return event;
   }
 
@@ -2367,6 +2397,10 @@ class Terminal {
               }
             }
 
+            if (event.type == EventType::None && parser_.in_sequence()) {
+              event = parser_.flush();
+            }
+
             if (event.type != EventType::None) {
               // Apply modifier flags from Windows control key state
               DWORD ks = ir[0].Event.KeyEvent.dwControlKeyState;
@@ -2529,6 +2563,10 @@ class Terminal {
               break;
             }
             safety_break++;
+          }
+
+          if (event.type == EventType::None && parser_.in_sequence()) {
+            event = parser_.flush();
           }
 
           // Apply modifier flags from Windows control key state
@@ -2712,6 +2750,9 @@ class Terminal {
       }
     }
 #endif
+    if (event.type == EventType::None && parser_.in_sequence()) {
+      return parser_.flush();
+    }
     return event;
   }
 
